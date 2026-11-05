@@ -1,0 +1,31 @@
+# ===== Môi trường (mỗi máy tự tạo) =====
+venv_autogen/
+__pycache__/
+*.pyc
+
+# ===== Khoá bí mật — TUYỆT ĐỐI không đẩy lên =====
+OAI_CONFIG_LIST
+.env
+
+# ===== Kết quả chạy: truyện, kịch bản, prompt video =====
+output/
+
+# ===== Cache của AutoGen (từng chứa 28 MB câu trả lời cũ) =====
+.cache/
+
+# ===== Bản sao lưu / file nháp =====
+script_viet_truyen.backup.py
+*.bak
+
+# ===== Gói phát hành =====
+*.zip
+
+# ===== Truyện cá nhân (giữ lại file mẫu vi_du_dau_vao.md) =====
+lacdaosinhTon.md
+TutienGiuaHocVien.md
+TutienGiuaHocVienV2.md
+kichbannhap.md
+
+# Script cũ sinh prompt MiniMax: đọc OAI_CONFIG_LIST (đã gitignore) nên
+# bản trong repo sẽ không chạy được. Giữ ở máy, chưa đưa lên.
+script_prompt_minimax.py

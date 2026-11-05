@@ -1,0 +1,135 @@
+# ============================================================
+#  Cấu hình cho phòng họp biên kịch + pipeline truyện dài
+#  Sửa file này, KHÔNG cần sửa code Python.
+#
+#  Chạy kiểm tra:  .\venv_autogen\Scripts\python.exe check.py
+# ============================================================
+
+# ------------------------------------------------------------
+# 1) Nơi chạy model
+#    kind = "ollama"  -> chạy trên máy, miễn phí
+#    kind = "openai"  -> gọi API trả tiền (cần biến môi trường)
+# ------------------------------------------------------------
+[server]
+kind = "ollama"
+base_url = "http://127.0.0.1:11434"
+
+
+# ------------------------------------------------------------
+# 2) Thư viện model — đặt tên gợi nhớ để dùng lại nhiều nơi
+#    Đổi model ở đây là đổi cho MỌI chỗ đang dùng tên đó.
+# ------------------------------------------------------------
+[models.nhanh]
+# Viết nhiều, cần tốc độ
+model = "qwen2.5:7b"
+num_ctx = 16384
+temperature = 0.8
+
+[models.sau]
+# Cần suy luận: lập bible, phản biện, nén trí nhớ
+model = "deepseek-r1:8b"
+num_ctx = 16384
+temperature = 0.5
+
+[models.api]
+# Dùng khi [server] kind = "openai"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+temperature = 0.7
+
+
+# ------------------------------------------------------------
+# 3) Vai trong phòng họp
+#    Thêm vai mới = copy một block [roles.xxx] rồi sửa.
+#    system: viết trực tiếp, hoặc trỏ tới file .md
+# ------------------------------------------------------------
+[roles.head_writer]
+description = "Trưởng nhóm biên kịch: chốt ý tưởng cốt lõi, logline, cấu trúc 3 hồi. Chọn khi cần định hướng hoặc tổng kết."
+system = "Bạn là Trưởng nhóm Biên kịch. Nhiệm vụ của bạn là đưa ra ý tưởng cốt lõi, logline và cấu trúc 3 hồi dựa trên yêu cầu."
+model = "sau"
+temperature = 0.6
+
+[roles.script_writer]
+description = "Biên kịch chính: viết phân cảnh và lời thoại tiếng Việt. Chọn khi cần viết hoặc viết lại kịch bản."
+system = "Bạn là Biên kịch chuyên phân cảnh và thoại. Nhiệm vụ của bạn là nhận khung từ Trưởng nhóm, phát triển chi tiết các phân cảnh và viết lời thoại sắc sảo, tự nhiên bằng tiếng Việt."
+model = "nhanh"
+temperature = 0.8
+
+[roles.script_doctor]
+description = "Biên tập viên phản biện: soi lỗi logic, thoại sến, yêu cầu sửa. Chọn khi bản kịch bản đã có và cần bị bắt lỗi."
+system = "Bạn là Biên tập viên phản biện (Script Doctor). Nhiệm vụ của bạn là soi lỗi logic cốt truyện, độ sến của thoại, và đưa ra các yêu cầu sửa đổi khắt khe."
+model = "sau"
+temperature = 0.4
+
+# Người điều phối: chọn ai nói tiếp theo
+[roles.manager]
+description = "Điều phối phòng họp, chọn người nói tiếp."
+system = "Bạn là người điều phối. Chọn người nói tiếp theo."
+model = "nhanh"
+temperature = 0.2
+
+
+# ------------------------------------------------------------
+# 4) Phòng họp
+# ------------------------------------------------------------
+[groupchat]
+# Thứ tự tham gia (không cần user_proxy, nó chỉ khởi động)
+members = ["head_writer", "script_writer", "script_doctor"]
+manager = "manager"
+max_round = 10
+# Cùng một người nói 2 lượt liền sẽ khiến model local trả về rỗng
+allow_repeat_speaker = false
+# In nguyên văn mọi message của autogen (rất rối) -> để false
+verbose_library_logs = false
+done_marker = "HOÀN TẤT"
+
+
+# ------------------------------------------------------------
+# 5) Pipeline truyện dài
+#    Mỗi chặng một model riêng — đây là chỗ tiết kiệm thời gian
+# ------------------------------------------------------------
+[pipeline.truyen]
+chapters = 12
+words = 900
+review_enabled = true  # bật tầng tự soát lỗi
+auto_compact = true    # bật nén trí nhớ
+
+[pipeline.truyen.bible]
+# Cần hiểu tính cách + luật truyện -> model "sau"
+model = "sau"
+prompt = "prompts/bible.md"
+temperature = 0.4
+
+[pipeline.truyen.style]
+# Viết 1 đoạn mẫu giọng văn
+model = "nhanh"
+prompt = "prompts/style.md"
+temperature = 0.7
+
+[pipeline.truyen.outline]
+model = "sau"
+prompt = "prompts/outline.md"
+temperature = 0.5
+
+[pipeline.truyen.chapter]
+# Viết nhiều nhất -> model nhanh
+model = "nhanh"
+prompt = "prompts/chapter.md"
+temperature = 0.8
+
+[pipeline.truyen.continue]
+# Viết tiếp khi chương bị hụt từ (dùng chung prompt với chặng chapter)
+model = "nhanh"
+prompt = "prompts/continue.md"
+temperature = 0.8
+
+[pipeline.truyen.review]
+model = "nhanh"
+prompt = "prompts/review.md"
+temperature = 0.5
+
+[pipeline.truyen.compact]
+model = "sau"
+prompt = "prompts/compact.md"
+temperature = 0.3
