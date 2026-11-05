@@ -85,6 +85,24 @@ class NovelSpec:
 
 
 @dataclass
+class VideoSpec:
+    """Pipeline dựng prompt video MiniMax H3."""
+
+    input: str = ""
+    seconds: float = 10.0
+    fps: int = 24
+    max_shots: int = 3
+    references: dict[int, str] = field(default_factory=dict)
+    stages: dict[str, StageSpec] = field(default_factory=dict)
+
+    def frames(self) -> int:
+        """Số frame hợp lệ theo snap 17k+5 của H3, gần nhất với seconds*fps."""
+        raw = self.seconds * self.fps
+        k = max(1, round((raw - 5) / 17))
+        return 17 * k + 5
+
+
+@dataclass
 class Config:
     path: Path
     server_kind: str
@@ -93,6 +111,7 @@ class Config:
     roles: dict[str, RoleSpec]
     groupchat: GroupChatSpec
     novel: NovelSpec
+    video: VideoSpec = field(default_factory=VideoSpec)
 
     def model(self, key: str) -> ModelSpec:
         try:
@@ -142,7 +161,9 @@ def load(path: str | Path | None = None) -> Config:
 
     roles = _load_roles(raw.get("roles") or {}, models, root)
     groupchat = _load_groupchat(raw.get("groupchat") or {}, roles)
-    novel = _load_novel(raw.get("pipeline", {}).get("truyen") or {}, models, root)
+    pipeline = raw.get("pipeline") or {}
+    novel = _load_novel(pipeline.get("truyen") or {}, models, root)
+    video = _load_video(pipeline.get("video") or {}, models, root)
 
     return Config(
         path=cfg_path,
@@ -152,6 +173,7 @@ def load(path: str | Path | None = None) -> Config:
         roles=roles,
         groupchat=groupchat,
         novel=novel,
+        video=video,
     )
 
 
@@ -339,5 +361,79 @@ def _load_novel(raw: dict, models: dict[str, ModelSpec], root: Path) -> NovelSpe
         words=int(words),
         review=bool(raw.get("review_enabled", True)),
         auto_compact=bool(raw.get("auto_compact", True)),
+        stages=stages,
+    )
+
+
+VIDEO_STAGES = ("split", "write")
+
+
+def _load_video(raw: dict, models: dict[str, ModelSpec], root: Path) -> VideoSpec:
+    """Đọc [pipeline.video] + các chặng split/write + bảng ảnh tham chiếu."""
+    if not raw:
+        return VideoSpec()
+
+    seconds = float(raw.get("seconds", 10))
+    fps = int(raw.get("fps", 24))
+    max_shots = int(raw.get("max_shots", 3))
+    if not 2 <= seconds <= 15:
+        raise ConfigError("[pipeline.video] seconds phải trong khoảng 2..15 (H3 tối đa 15s)")
+    if not 12 <= fps <= 60:
+        raise ConfigError("[pipeline.video] fps phải trong khoảng 12..60")
+    if not 1 <= max_shots <= 6:
+        raise ConfigError("[pipeline.video] max_shots phải trong khoảng 1..6")
+
+    references: dict[int, str] = {}
+    for key, label in (raw.get("references") or {}).items():
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                f"[pipeline.video.references] khoá phải là số thứ tự ảnh (1, 2, 3...), đang là '{key}'"
+            ) from None
+        references[idx] = str(label).strip()
+
+    stages: dict[str, StageSpec] = {}
+    for key in VIDEO_STAGES:
+        block = raw.get(key)
+        if block is None:
+            raise ConfigError(f"Thiếu chặng [pipeline.video.{key}] (cần đủ: split, write)")
+        if not isinstance(block, dict):
+            raise ConfigError(f"[pipeline.video.{key}] phải là một block")
+
+        model_key = str(block.get("model") or "")
+        if model_key not in models:
+            raise ConfigError(
+                f"[pipeline.video.{key}] model = '{model_key}' không tồn tại. "
+                f"Đã có: {', '.join(models)}"
+            )
+
+        prompt_rel = block.get("prompt")
+        if not prompt_rel:
+            raise ConfigError(f"[pipeline.video.{key}] thiếu field 'prompt'")
+        prompt_path = (root / str(prompt_rel)).resolve()
+        if not prompt_path.exists():
+            raise ConfigError(f"[pipeline.video.{key}] không thấy file prompt: {prompt_rel}")
+        system, user = read_prompt_file(prompt_path)
+
+        temp = block.get("temperature")
+        if temp is not None and (not isinstance(temp, (int, float)) or not 0 <= float(temp) <= 2):
+            raise ConfigError(f"[pipeline.video.{key}] temperature phải trong khoảng 0..2")
+
+        stages[key] = StageSpec(
+            key=key,
+            model=models[model_key],
+            prompt_path=prompt_path,
+            system=system,
+            user=user,
+            temperature=float(temp) if temp is not None else None,
+        )
+
+    return VideoSpec(
+        input=str(raw.get("input") or ""),
+        seconds=seconds,
+        fps=fps,
+        max_shots=max_shots,
+        references=references,
         stages=stages,
     )

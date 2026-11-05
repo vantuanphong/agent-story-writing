@@ -133,3 +133,32 @@ temperature = 0.5
 model = "sau"
 prompt = "prompts/compact.md"
 temperature = 0.3
+
+
+# ------------------------------------------------------------
+# 6) Prompt video MiniMax H3 (ComfyUI)
+#    Xuất mỗi clip 1 file để kéo vào ComfyUI chạy hàng loạt.
+# ------------------------------------------------------------
+[pipeline.video]
+# Để trống: tự lấy truyện .md mới nhất trong output/, không có thì lấy kịch bản .txt
+input = ""
+seconds = 10           # H3 tối đa 15s; 10s = 243 frames @24fps
+fps = 24
+max_shots = 3          # số shot tối đa trong 1 clip
+
+[pipeline.video.references]
+# Ảnh tham chiếu R2V: số = thứ tự ảnh trong ComfyUI
+1 = "nhân vật chính"
+2 = "nhân vật nữ chính"
+
+[pipeline.video.split]
+# Chia truyện thành clip: cần hiểu mạch truyện
+model = "sau"
+prompt = "prompts/video_split.md"
+temperature = 0.4
+
+[pipeline.video.write]
+# Viết block H3: cần viết nhiều, ưu tiên tốc độ
+model = "nhanh"
+prompt = "prompts/video_write.md"
+temperature = 0.6

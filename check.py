@@ -114,6 +114,21 @@ def main(argv: list[str] | None = None) -> int:
             prompt_state = f"… {stage.prompt_path.name} (P2)"
         print(f"{key:<16}{_short(m.model, 40):<42}{prompt_state:<22} {mark}")
 
+    # --- Video ---
+    if cfg.video.stages:
+        print("\nPROMPT VIDEO (MiniMax H3)")
+        print(
+            f"  {int(cfg.video.seconds)}s/clip = {cfg.video.frames()} frames "
+            f"@{cfg.video.fps}fps | tối đa {cfg.video.max_shots} shot/clip"
+        )
+        for key, stage in cfg.video.stages.items():
+            ok, mark = _model_status(cfg, stage.model.model, installed)
+            problems += 0 if ok else 1
+            print(f"  {key:<14}{_short(stage.model.model, 38):<40}{stage.prompt_path.name:<20} {mark}")
+        if cfg.video.references:
+            refs = ", ".join(f"<Picture {n}> = {label}" for n, label in sorted(cfg.video.references.items()))
+            print(f"  Ảnh tham chiếu: {refs}")
+
     # --- Kết luận ---
     print("\n" + "=" * 78)
     if problems:

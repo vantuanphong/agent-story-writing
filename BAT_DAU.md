@@ -49,6 +49,12 @@ Tạo file `TenTruyen.md` gồm 4 mục `Plot` / `Setting` / `Style` / `Characte
 
 Dừng giữa chừng (Ctrl+C, mất điện, lỗi) → chạy tiếp bằng `--resume`.
 
+Muốn dựng **prompt video** từ truyện (MiniMax H3 / ComfyUI):
+
+```powershell
+.\venv_autogen\Scripts\python.exe script_prompt_minimax.py --input output\truyen_....md --limit 3
+```
+
 ---
 
 ## Khi gặp lỗi

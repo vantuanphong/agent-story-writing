@@ -200,7 +200,23 @@ Ra `output\kich_ban_<giờ>.txt`. Cái này ra kịch bản ngắn (~5 KB), **kh
 
 ---
 
-## 10. Lỗi thường gặp
+## 10. Dựng prompt video (tuỳ chọn)
+
+Biến truyện thành prompt cho MiniMax H3 / ComfyUI:
+
+```powershell
+.\venv_autogen\Scripts\python.exe script_prompt_minimax.py --input output\truyen_....md --limit 3
+```
+
+`--limit 3` để thử 3 clip trước. Kết quả: `output\video_<giờ>\seg_001.txt`, `seg_002.txt`…
+mỗi file là một lần Generate. Xem `contact.md` để biết clip nào còn lỗi.
+
+Cấu hình trong `config.toml` mục `[pipeline.video]`: độ dài clip (10s = 243 frames),
+fps, số shot tối đa, và bảng `[pipeline.video.references]` (nhân vật ↔ `<Picture N>`).
+
+---
+
+## 11. Lỗi thường gặp
 
 | Lỗi | Nguyên nhân | Cách xử |
 |---|---|---|
@@ -215,7 +231,7 @@ Ra `output\kich_ban_<giờ>.txt`. Cái này ra kịch bản ngắn (~5 KB), **kh
 
 ---
 
-## 11. Cấu trúc thư mục
+## 12. Cấu trúc thư mục
 
 ```
 config.toml            cấu hình: model, vai, số chương
@@ -234,7 +250,7 @@ Chi tiết sâu hơn: xem `README.md`.
 
 ---
 
-## 12. Mẹo dùng thật
+## 13. Mẹo dùng thật
 
 - Mỗi chương 900–1200 từ là điểm ngọt. Đẩy lên 2000 từ model dễ lặp.
 - 12 chương ≈ 10.000 từ ≈ 10 phút máy. 30 chương ≈ 30 phút.

@@ -25,7 +25,3 @@ lacdaosinhTon.md
 TutienGiuaHocVien.md
 TutienGiuaHocVienV2.md
 kichbannhap.md
-
-# Script cũ sinh prompt MiniMax: đọc OAI_CONFIG_LIST (đã gitignore) nên
-# bản trong repo sẽ không chạy được. Giữ ở máy, chưa đưa lên.
-script_prompt_minimax.py

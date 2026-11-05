@@ -238,6 +238,58 @@ def t_count_words():
 
 
 # ----------------------------------------------------------------------
+# Video MiniMax H3
+# ----------------------------------------------------------------------
+def t_video_frames():
+    expect(cfgmod.VideoSpec(seconds=10, fps=24).frames() == 243, "10s@24fps phải là 243 frames")
+    expect(cfgmod.VideoSpec(seconds=6, fps=24).frames() == 141, "6s@24fps phải là 141 frames")
+    expect(cfgmod.VideoSpec(seconds=15, fps=24).frames() == 362, "15s@24fps phải là 362 frames")
+
+
+def t_video_parse_beats():
+    from truyen import video
+
+    txt = (
+        "CLIP 1 | Hải mở cuốn sổ rồi khựng lại | Hải | xưởng, đèn dầu\n"
+        "rác không parse\n"
+        "**CLIP 2** | Lam đặt đèn lồng xuống | Lam | bến tàu\n"
+    )
+    beats = video.parse_beats(txt)
+    expect(len(beats) == 2, f"đọc được {len(beats)} clip, mong 2")
+    expect(beats[1]["character"] == "Lam", "sai nhân vật clip 2")
+    expect(beats[0]["n"] == 1 and beats[1]["n"] == 2, "đánh số lại sai")
+
+
+def t_video_fallback():
+    from truyen import video
+
+    src = "Đoạn một kể chuyện gì đó. " + "x " * 50 + "\n\nĐoạn hai khác. " + "y " * 50
+    expect(len(video.fallback_beats(src)) == 2, "fallback chia đoạn sai")
+
+
+def t_video_audit():
+    from truyen import video
+
+    good = (
+        "integrated_multimodal_description: [Shot 1] At 00:00.000, medium shot on <Picture 1> "
+        "as he lifts the lantern. [Shot 2] At 00:04.500, the camera cuts to a close-up of the notebook.\n"
+        "overall_soundscape: rain on a tin roof.\n"
+        "non_diegetic_music: low strings.\n"
+        "ENDS_WITH: he stands at the bench holding the lantern."
+    )
+    expect(video.audit_block(good, 10, 3, {1: "Hải"}) == [], f"báo nhầm block tốt: {video.audit_block(good, 10, 3, {1: 'Hải'})}")
+
+    bad = "[Shot 1] At 00:00.000, Hải đứng nhìn.\n[Shot 2] At 00:12.000, the camera cuts to a man."
+    problems = video.audit_block(bad, 10, 3)
+    expect(len(problems) >= 4, f"bắt được {len(problems)} lỗi, mong >= 4")
+
+    # Thẻ Picture thiếu ngoặc nhọn
+    loose = good.replace("<Picture 1>", "Picture 1")
+    expect(any("ngoặc nhọn" in p for p in video.audit_block(loose, 10, 3)), "không bắt được Picture thiếu < >")
+
+
+
+# ----------------------------------------------------------------------
 CHECKS = [
     ("config.toml đọc được", t_config_loads),
     ("đủ 6 chặng + prompt", t_pipeline_stages),
@@ -258,6 +310,10 @@ CHECKS = [
     ("gộp message cùng role", t_merge_roles),
     ("slug tên file", t_slugify),
     ("đếm từ", t_count_words),
+    ("video: frames 17k+5", t_video_frames),
+    ("video: đọc dòng CLIP", t_video_parse_beats),
+    ("video: fallback chia đoạn", t_video_fallback),
+    ("video: 9 cổng kiểm prompt H3", t_video_audit),
 ]
 
 

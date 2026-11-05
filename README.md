@@ -36,6 +36,7 @@ Cả ba phải xanh trước khi chạy thật.
 | Viết tiếp lần dở | `& $py script_viet_truyen.py --resume` |
 | Chọn đúng file trạng thái | `--resume-file output\truyen_....json` |
 | Phòng họp biên kịch | `run_ollama.bat` hoặc `& $py script_phong_hop.py` |
+| Dựng prompt video từ truyện | `& $py script_prompt_minimax.py --input output\truyen_....md` |
 | Dùng bộ cấu hình khác | thêm `--config ten_khac.toml` |
 
 `Ctrl+C` bất cứ lúc nào: chương đang viết dở mất, các chương đã xong còn nguyên.
@@ -55,6 +56,8 @@ Cả ba phải xanh trước khi chạy thật.
 | Tăng context cho chương dài | `config.toml` → `num_ctx` của model, hoặc `--ctx 24576` |
 | Tắt tầng soát lỗi | `--no-review` hoặc `[pipeline.truyen] review_enabled = false` |
 | Đổi model khi đang viết dở | `--resume --model <tên model khác>` |
+| Độ dài clip video | `config.toml` → `[pipeline.video] seconds` (tối đa 15) |
+| Nhân vật ↔ ảnh tham chiếu R2V | `config.toml` → `[pipeline.video.references]` |
 
 **Không cần sửa file `.py` nào** cho các việc trên.
 
@@ -74,8 +77,10 @@ truyen/                     thư viện dùng chung
   context.py                dựng "gói bàn giao" cho mỗi chương
   state.py                  lưu 3 file, ghi atomic, tìm lần chạy dở
   groupchat.py              phòng họp biên kịch
+  video.py                  dựng prompt video MiniMax H3 (chia clip + 9 cổng kiểm)
 script_viet_truyen.py       chạy pipeline truyện
 script_phong_hop.py         chạy phòng họp
+script_prompt_minimax.py    dựng prompt video H3 (mỗi clip một file)
 script_autogen.py           alias của script_phong_hop.py (giữ thói quen cũ)
 script_autogen_ollama.py    alias của script_phong_hop.py
 check.py  check_ollama.py  selfcheck.py
@@ -135,7 +140,31 @@ Bạn là nhà văn Việt Nam...
 
 ---
 
-## 7. Ghi chú
+## 7. Prompt video (MiniMax H3)
+
+Biến truyện thành prompt video cho ComfyUI:
+
+```powershell
+.\venv_autogen\Scripts\python.exe script_prompt_minimax.py --input output\truyen_....md
+```
+
+Ra `output\video_<giờ>\`:
+
+| File | Dùng để |
+|---|---|
+| `seg_001.txt`, `seg_002.txt`… | mỗi file = một lần Generate (dán vào ComfyUI) |
+| `contact.md` | bảng: clip, số shot, nhân vật, lỗi còn lại |
+| `state.json` | `ENDS_WITH` từng clip, để nối hoặc viết tiếp |
+
+**9 cổng kiểm tất định** (không cần model): đủ 3 trường đúng thứ tự, shot nằm trong
+`integrated_multimodal_description`, `[Shot 1] At 00:00.000`, cut time tăng và < 10s,
+mỗi shot có cỡ cảnh, `<d>` có mã ngôn ngữ, không có tiếng Việt ngoài `<d>`,
+`<Picture N>` có ngoặc nhọn, có `ENDS_WITH`. Clip sai được nhờ model sửa một lần;
+sửa không tốt hơn thì giữ bản gốc và ghi lỗi vào `contact.md`.
+
+Model chia cảnh và model viết prompt tách riêng (`[pipeline.video.split]` / `.write`).
+
+## 8. Ghi chú
 
 - Không cần internet, trừ khi `[server] kind = "openai"`.
 - Mọi con số trong code (chặn phình 2,2×, 6 bộ soát lỗi, nén mỗi 8 chương) đều là tham số đã đo trên máy này, sửa được nếu cần.
