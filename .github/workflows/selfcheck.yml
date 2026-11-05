@@ -1,0 +1,31 @@
+name: selfcheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 19 phép kiểm (không cần model)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Biên dịch toàn bộ mã
+        run: python -m compileall -q truyen script_viet_truyen.py script_phong_hop.py check.py check_ollama.py selfcheck.py
+
+      - name: Tự kiểm tra (config, prompt, soát văn, lưu trạng thái)
+        run: python selfcheck.py
+
+      - name: CLI còn chạy được
+        run: |
+          python script_viet_truyen.py --help > /dev/null
+          python script_phong_hop.py --help > /dev/null
+          python check.py --help > /dev/null
+          python check_ollama.py --help > /dev/null

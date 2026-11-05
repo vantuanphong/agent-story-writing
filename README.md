@@ -1,5 +1,7 @@
 # Viết truyện dài & phòng họp biên kịch (model local)
 
+[![selfcheck](https://github.com/vantuanphong/agent-story-writing/actions/workflows/selfcheck.yml/badge.svg)](https://github.com/vantuanphong/agent-story-writing/actions/workflows/selfcheck.yml)
+
 Hai công cụ, dùng chung một `config.toml`:
 
 - **Pipeline truyện** — từ 1 file tóm tắt ra truyện nhiều chương (chia chương, tự soát lỗi, nén trí nhớ, viết tiếp được).
