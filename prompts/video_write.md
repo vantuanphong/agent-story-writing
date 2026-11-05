@@ -31,12 +31,18 @@ Nhân vật chính: {character}
 Không gian: {space}
 Thời lượng: {seconds} giây (~{frames} frames @{fps}fps), tối đa {max_shots} shot.
 
-Trạng thái cuối clip trước (phải nối tiếp từ đây):
+=== NHÂN VẬT TRONG TRUYỆN (phải giữ đúng ngoại hình) ===
+{cast}
+
+=== CÁC CLIP ĐÃ QUAY (đã xảy ra, không được kể lại) ===
+{memory}
+
+=== TRẠNG THÁI CUỐI CLIP TRƯỚC (bắt buộc nối tiếp từ đây) ===
 {prev_ends}
 
 Nhân vật tham chiếu (dùng đúng thẻ <Picture N> khi nhắc tới họ):
 {refs}
 
 Sau 3 trường bắt buộc, thêm 2 dòng cuối:
-CONTINUES_FROM: <một câu, nối với clip trước>
+CONTINUES_FROM: <một câu, NHẮC LẠI đúng trạng thái cuối clip trước ở trên>
 ENDS_WITH: <một câu: ai ở đâu, đang làm gì, hướng nhìn, prop trên tay>

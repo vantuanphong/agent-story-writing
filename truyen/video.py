@@ -27,6 +27,9 @@ OUTPUT_DIR = BASE_DIR / "output"
 
 H3_FIELDS = ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
 
+# Câu nối cảnh do MÁY chèn, không giao cho model
+CONTINUITY_TEMPLATE = "Continuing directly from the previous clip, where {anchor}."
+
 # Cỡ cảnh hợp lệ — thiếu là render ra cảnh lơ lửng
 SHOT_SIZES = (
     "extreme close-up", "close-up", "close up", "medium shot", "medium wide",
@@ -135,6 +138,27 @@ def split_clips(client, stage, source: str, seconds: float) -> tuple[list[dict],
 # ----------------------------------------------------------------------
 # Kiểm block (tất định, không gọi model)
 # ----------------------------------------------------------------------
+def clean_block(text: str) -> str:
+    """Bỏ rào markdown và chuẩn hoá thứ tự timestamp/shot.
+
+    Model hay trả về:
+        ```plaintext
+        At 00:00.000, [Shot 1] The establishing shot...
+    H3 cần:
+        [Shot 1] At 00:00.000, The establishing shot...
+    """
+    body = (text or "").strip()
+    body = re.sub(r"^```[a-zA-Z]*\s*\n?", "", body)
+    body = re.sub(r"\n?\s*```$", "", body)
+    body = re.sub(
+        r"At\s+(\d{1,2}:\d{2}\.\d{3})\s*,?\s*\[Shot\s+(\d+)\]\s*[,:]?\s*",
+        r"[Shot \2] At \1, ",
+        body,
+        flags=re.IGNORECASE,
+    )
+    return body.strip()
+
+
 def audit_block(
     text: str, seconds: float, max_shots: int, refs: dict[int, str] | None = None
 ) -> list[str]:
@@ -224,7 +248,16 @@ def build_references(refs: dict[int, str]) -> str:
     return "\n".join(f"<Picture {n}> = {label}" for n, label in sorted(refs.items()))
 
 
-def write_segment(client, stage, beat: dict, cfg: cfgmod.Config, prev_ends: str, repair: bool) -> str:
+def write_segment(
+    client,
+    stage,
+    beat: dict,
+    cfg: cfgmod.Config,
+    prev_ends: str,
+    repair: bool,
+    cast: str = "",
+    memory: str = "",
+) -> tuple[str, str]:
     refs = build_references(cfg.video.references)
     prompt = stage.user
     for key, value in (
@@ -238,10 +271,13 @@ def write_segment(client, stage, beat: dict, cfg: cfgmod.Config, prev_ends: str,
         ("{max_shots}", str(cfg.video.max_shots)),
         ("{prev_ends}", prev_ends),
         ("{refs}", refs),
+        ("{cast}", cast or "(không có)"),
+        ("{memory}", memory or "(chưa có clip nào)"),
     ):
         prompt = prompt.replace(key, value)
 
     text = ask(client, stage.system, prompt, temperature=stage.effective_temperature)
+    text = clean_block(text)
     problems = audit_block(text, cfg.video.seconds, cfg.video.max_shots, cfg.video.references)
 
     if repair and problems:
@@ -254,6 +290,7 @@ def write_segment(client, stage, beat: dict, cfg: cfgmod.Config, prev_ends: str,
             + "\n".join(f"- {p}" for p in problems[:8])
         )
         fixed = ask(client, stage.system, fix_prompt, temperature=stage.effective_temperature)
+        fixed = clean_block(fixed)
         after = audit_block(fixed, cfg.video.seconds, cfg.video.max_shots, cfg.video.references)
         if fixed and len(after) < len(problems):
             progress.say(f"  ✎ đã sửa: {len(problems)} → {len(after)} lỗi")
@@ -261,12 +298,144 @@ def write_segment(client, stage, beat: dict, cfg: cfgmod.Config, prev_ends: str,
         else:
             progress.say("  ✎ sửa không tốt hơn — giữ bản gốc")
 
-    return text.strip()
+    # Máy tự bảo đảm cấu trúc + nối cảnh, không để model quyết
+    text = normalize_shots(text)
+    text, mode = inject_continuity(text, prev_ends)
+    if mode == "injected":
+        progress.say("  🔗 đã chèn câu nối cảnh từ clip trước vào prompt")
+    elif mode == "natural":
+        progress.say("  🔗 model tự nhắc lại trạng thái clip trước")
+
+    return text.strip(), mode
 
 
 def ends_with(text: str) -> str:
     m = re.search(r"^ENDS_WITH:\s*(.+)$", text or "", re.MULTILINE | re.IGNORECASE)
     return m.group(1).strip() if m else ""
+
+
+def continues_from(text: str) -> str:
+    m = re.search(r"^CONTINUES_FROM:\s*(.+)$", text or "", re.MULTILINE | re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+def extract_cast(source: str, limit: int = 900) -> str:
+    """Lấy mục Characters trong file đầu vào để model nhớ ngoại hình, tính cách."""
+    m = re.search(r"^#*\s*Characters\s*$", source or "", re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return "(không có mục Characters trong nguồn)"
+    rest = source[m.end() :]
+    stop = re.search(r"^#*\s*(Locations|Plot|Setting|Style)\s*$", rest, re.MULTILINE | re.IGNORECASE)
+    block = rest[: stop.start()] if stop else rest
+    return " ".join(block.split())[:limit]
+
+
+def build_memory(clips: list[dict], limit_chars: int = 160) -> str:
+    """Tóm tắt các clip đã viết để model biết chuyện gì đã xảy ra."""
+    if not clips:
+        return "(clip đầu tiên, chưa có gì xảy ra)"
+    lines = []
+    for c in clips:
+        head = " ".join(c["text"].split())[:limit_chars]
+        lines.append(f"Clip {c['n']:02d} [{c['character']} · {c['space'][:60]}] {head}…")
+        if c.get("ends"):
+            lines.append(f"          kết thúc: {c['ends']}")
+    return "\n".join(lines)
+
+
+def check_continuity(text: str, prev_ends: str, prev_clips: list[dict]) -> list[str]:
+    """Model có thực sự nhớ clip trước không? So CONTINUES_FROM với ENDS_WITH cũ."""
+    if not prev_ends or prev_ends.startswith("("):
+        return []
+    given = continues_from(text)
+    if not given:
+        return ["Thiếu 'CONTINUES_FROM:' — model không nhắc gì tới clip trước"]
+    if audit_similar(given, prev_ends) >= 0.5:
+        return []
+    # cho phép nếu nhắc đúng nhân vật / thẻ ảnh của clip trước
+    refs = set(re.findall(r"<Picture\s+\d+>", prev_ends))
+    if refs and refs & set(re.findall(r"<Picture\s+\d+>", given)):
+        return []
+    return [f"CONTINUES_FROM không khớp trạng thái cuối clip trước: \"{given[:70]}…\""]
+
+
+def audit_similar(a: str, b: str) -> float:
+    import difflib
+
+    norm = lambda s: " ".join((s or "").lower().split())  # noqa: E731
+    return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
+
+
+def force_continues_from(text: str, prev_ends: str) -> str:
+    """Ghi lại dòng CONTINUES_FROM bằng trạng thái thật của clip trước."""
+    anchor = _ascii(" ".join((prev_ends or "").split()))[:240].rstrip(" .")
+    line = f"CONTINUES_FROM: Continuing directly from the previous clip, where {anchor}."
+    if re.search(r"^CONTINUES_FROM:.*$", text or "", re.MULTILINE | re.IGNORECASE):
+        return re.sub(
+            r"^CONTINUES_FROM:.*$", line, text, count=1, flags=re.MULTILINE | re.IGNORECASE
+        )
+    return (text or "").rstrip() + "\n" + line
+
+
+
+
+def normalize_shots(body: str) -> str:
+    """Chuẩn hoá phần cut do máy làm, không để model quyết.
+
+    - Shot 1 luôn bắt đầu 00:00.000 (H3 bắt buộc).
+    - Shot 2 trở đi luôn có 'the camera cuts to' ngay sau timestamp,
+      nếu model quên thì chèn vào — thiếu cụm này H3 hiểu là một cảnh liền, không cắt.
+    """
+    body = re.sub(
+        r"(\[Shot\s+1\]\s*At\s+)\d{2}:\d{2}\.\d{3}",
+        r"\g<1>00:00.000",
+        body,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+    def add_cue(match: re.Match) -> str:
+        return match.group(1) + " the camera cuts to"
+
+    body = re.sub(
+        r"(\[Shot\s+(?:[2-9]|\d{2,})\]\s*At\s+\d{2}:\d{2}\.\d{3},)(?!\s*the camera)",
+        add_cue,
+        body,
+        flags=re.IGNORECASE,
+    )
+    return body
+
+
+def _ascii(text: str) -> str:
+    """Bỏ dấu tiếng Việt để câu chèn vào prompt vẫn là tiếng Anh thuần."""
+    import unicodedata
+
+    text = text.replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFD", text)
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+
+
+def inject_continuity(body: str, prev_ends: str) -> tuple[str, str]:
+    """Chèn câu nối cảnh vào prompt — BẢO ĐẢM clip này có móc nối với clip trước.
+
+    Trả về (text mới, chế độ): "first" | "natural" (model tự nhắc) | "injected" (máy chèn).
+    """
+    anchor = " ".join((prev_ends or "").split())
+    if not anchor or anchor.startswith("("):
+        return body, "first"
+    anchor = _ascii(anchor)[:240].rstrip(" .")
+
+    if anchor.lower()[:80] in body.lower():
+        return body, "natural"
+
+    marker = f"{H3_FIELDS[0]}:"
+    i = body.find(marker)
+    if i < 0:
+        return body, "missing"
+    insert_at = i + len(marker)
+    sentence = " " + CONTINUITY_TEMPLATE.format(anchor=anchor)
+    return body[:insert_at] + sentence + body[insert_at:], "injected"
+
 
 
 def shot_count(text: str) -> int:
@@ -289,16 +458,34 @@ def export(output_dir: Path, stamp: str, clips: list[dict], source: Path, cfg: c
         f"- {len(clips)} clip · {int(cfg.video.seconds)}s/clip · {cfg.video.frames()} frames @{cfg.video.fps}fps",
         f"- Model: {cfg.video.stages['write'].model.model}",
         "",
-        "| Clip | File | Shot | Nhân vật | Lỗi còn lại |",
-        "|---|---|---|---|---|",
+        "| Clip | File | Shot | Nối cảnh | Nhân vật | Lỗi còn lại |",
+        "|---|---|---|---|---|---|",
     ]
     for clip in clips:
         rows.append(
             f"| {clip['n']:02d} | `seg_{clip['n']:03d}.txt` | {clip['shots']} "
-            f"| {clip['character']} | {'; '.join(clip['problems']) or '—'} |"
+            f"| {clip.get('continuity', '')} | {clip['character']} "
+            f"| {'; '.join(clip['problems']) or '—'} |"
         )
 
-    rows += ["", "## Nối tiếp (ENDS_WITH)", ""]
+    rows += [
+        "",
+        "## Nối cảnh khi render (quan trọng)",
+        "",
+        "Phần chữ đã nối sẵn: mỗi clip (trừ clip 1) có câu "
+        "`Continuing directly from the previous clip, where …` chèn tự động.",
+        "",
+        "Nhưng để hình **thật sự liền**, ComfyUI cần nối frame:",
+        "",
+        "1. Render `seg_001.txt` → lấy **frame cuối** lưu thành `last_001.png`",
+        "2. Render `seg_002.txt` với `last_001.png` làm ảnh đầu vào (I2V / first-frame)",
+        "3. Lặp lại: frame cuối của clip N = ảnh đầu của clip N+1",
+        "",
+        "Chỉ dựa vào chữ thì model vẫn có thể đổi ánh sáng/tư thế giữa hai clip.",
+        "",
+        "## Nối tiếp nội dung (ENDS_WITH)",
+        "",
+    ]
     for clip in clips:
         rows.append(f"- **Clip {clip['n']:02d}**: {clip['ends'] or '(không rõ)'}")
 
@@ -384,12 +571,45 @@ def main(argv: list[str] | None = None) -> int:
         progress.say(f"Chia được {len(beats)} clip")
 
         prev_ends = "(clip đầu tiên, chưa có)"
+        cast = extract_cast(source)
         for beat in beats:
             progress.say(f"Clip {beat['n']:02d}: {beat['summary'][:60]}")
-            text = write_segment(
-                client_for(stage_write), stage_write, beat, cfg, prev_ends, not args.no_repair
+            memory = build_memory(clips)
+            text, mode = write_segment(
+                client_for(stage_write),
+                stage_write,
+                beat,
+                cfg,
+                prev_ends,
+                not args.no_repair,
+                cast=cast,
+                memory=memory,
             )
+
+            # Model có thật sự nhớ clip trước không? Không thì nhắc lại 1 lần,
+            # vẫn không xong thì máy ghi lại CONTINUES_FROM từ trạng thái thật.
+            if check_continuity(text, prev_ends, clips):
+                progress.say("  🔁 model chưa nhắc đúng clip trước — nhắc lại ...")
+                text2, mode2 = write_segment(
+                    client_for(stage_write),
+                    stage_write,
+                    beat,
+                    cfg,
+                    prev_ends,
+                    not args.no_repair,
+                    cast=cast,
+                    memory=memory,
+                )
+                if not check_continuity(text2, prev_ends, clips):
+                    text, mode = text2, mode2
+                else:
+                    text = force_continues_from(text, prev_ends)
+                    mode = "forced"
+                    progress.say("  🔗 đã ghi CONTINUES_FROM bằng trạng thái clip trước")
+
             problems = audit_block(text, cfg.video.seconds, cfg.video.max_shots, cfg.video.references)
+            if mode == "missing":
+                problems.append("Không tìm được trường để chèn câu nối cảnh")
             clips.append(
                 {
                     "n": beat["n"],
@@ -398,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
                     "text": text,
                     "shots": shot_count(text),
                     "ends": ends_with(text),
+                    "continuity": mode,
                     "problems": problems,
                 }
             )

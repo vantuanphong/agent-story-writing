@@ -288,6 +288,56 @@ def t_video_audit():
     expect(any("ngoặc nhọn" in p for p in video.audit_block(loose, 10, 3)), "không bắt được Picture thiếu < >")
 
 
+def t_video_clean_block():
+    from truyen import video
+
+    fence = "`" * 3
+    raw = (
+        f"{fence}plaintext\n"
+        "integrated_multimodal_description: At 00:00.000, [Shot 1] The establishing shot.\n"
+        "overall_soundscape: rain.\nnon_diegetic_music: strings.\n"
+        f"ENDS_WITH: he stands.\n{fence}"
+    )
+    out = video.clean_block(raw)
+    expect("```" not in out, "chưa bỏ rào markdown")
+    expect(
+        out.startswith("integrated_multimodal_description: [Shot 1] At 00:00.000,"),
+        f"chưa đảo timestamp/shot: {out[:80]}",
+    )
+
+
+def t_video_continuity():
+    from truyen import video
+
+    prev = "Hai sits at his desk, looking at the torn page of his notebook."
+    wrong = "CONTINUES_FROM: He walks into the room.\nENDS_WITH: he sits down."
+    expect(video.check_continuity(wrong, prev, []), "không bắt được CONTINUES_FROM sai")
+
+    fixed = video.force_continues_from(wrong, prev)
+    expect(video.check_continuity(fixed, prev, []) == [], "ghi lại mà vẫn không khớp")
+    expect("Hai sits at his desk" in fixed, "câu ghi lại thiếu trạng thái thật")
+
+    right = "CONTINUES_FROM: " + prev + "\nENDS_WITH: he sits down."
+    expect(video.check_continuity(right, prev, []) == [], "báo nhầm khi model nhắc đúng")
+
+
+def t_video_cast_and_memory():
+    from truyen import video
+
+    src = "# Characters\nHải | nam | thợ sửa máy\n\n# Locations\nbến tàu"
+    cast = video.extract_cast(src)
+    expect("thợ sửa máy" in cast, "không lấy được mục Characters")
+    expect("bến tàu" not in cast, "lấy lẫn mục Locations")
+
+    clips = [
+        {"n": 1, "character": "Hải", "space": "xưởng", "text": "A long shot of the workshop at night.",
+         "ends": "he turns off the lamp"}
+    ]
+    mem = video.build_memory(clips)
+    expect("Clip 01" in mem and "he turns off the lamp" in mem, "memory thiếu dữ liệu clip trước")
+
+
+
 
 # ----------------------------------------------------------------------
 CHECKS = [
@@ -314,6 +364,9 @@ CHECKS = [
     ("video: đọc dòng CLIP", t_video_parse_beats),
     ("video: fallback chia đoạn", t_video_fallback),
     ("video: 9 cổng kiểm prompt H3", t_video_audit),
+    ("video: bỏ rào markdown, đảo timestamp", t_video_clean_block),
+    ("video: bắt model quên cảnh trước", t_video_continuity),
+    ("video: cast + trí nhớ clip", t_video_cast_and_memory),
 ]
 
 
