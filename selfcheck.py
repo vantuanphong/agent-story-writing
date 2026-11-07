@@ -304,6 +304,11 @@ def t_video_clean_block():
         out.startswith("integrated_multimodal_description: [Shot 1] At 00:00.000,"),
         f"chưa đảo timestamp/shot: {out[:80]}",
     )
+    # "Picture 3" thiếu ngoặc phải được bọc lại
+    wrapped = video.clean_block("medium shot on Picture 3 standing by the door")
+    expect("<Picture 3>" in wrapped, f"chưa bọc thẻ Picture: {wrapped}")
+    already = video.clean_block("medium shot on <Picture 3> standing by the door")
+    expect(already.count("<Picture 3>") == 1, "bọc hai lần thẻ đã đúng")
 
 
 def t_video_continuity():
@@ -319,6 +324,18 @@ def t_video_continuity():
 
     right = "CONTINUES_FROM: " + prev + "\nENDS_WITH: he sits down."
     expect(video.check_continuity(right, prev, []) == [], "báo nhầm khi model nhắc đúng")
+
+
+def t_video_refs_mapping():
+    spec = cfgmod.VideoSpec(
+        references={1: "Hải", 2: "Lam", 3: "Ông Tư"},
+        reference_images={1: "refs/hai.png"},
+    )
+    expect(spec.picture_of("Hải") == 1, "không khớp tên có dấu")
+    expect(spec.picture_of("hai") == 1, "không khớp tên không dấu")
+    expect(spec.picture_of("Ông Tư") == 3, "sai thứ tự ảnh")
+    expect(spec.picture_of("Người lạ") is None, "khớp nhầm người không có ảnh")
+    expect(spec.reference_images[1] == "refs/hai.png", "mất đường dẫn ảnh")
 
 
 def t_video_cast_and_memory():
@@ -367,6 +384,7 @@ CHECKS = [
     ("video: bỏ rào markdown, đảo timestamp", t_video_clean_block),
     ("video: bắt model quên cảnh trước", t_video_continuity),
     ("video: cast + trí nhớ clip", t_video_cast_and_memory),
+    ("video: khớp tên nhân vật ↔ <Picture N>", t_video_refs_mapping),
 ]
 
 

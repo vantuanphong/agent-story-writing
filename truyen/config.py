@@ -93,13 +93,33 @@ class VideoSpec:
     fps: int = 24
     max_shots: int = 3
     references: dict[int, str] = field(default_factory=dict)
+    reference_images: dict[int, str] = field(default_factory=dict)
     stages: dict[str, StageSpec] = field(default_factory=dict)
+
+    def picture_of(self, character: str) -> int | None:
+        """Tìm <Picture N> theo tên nhân vật (khớp tương đối, không phân biệt hoa thường)."""
+        target = _ascii_key(character)
+        if not target:
+            return None
+        for index, name in self.references.items():
+            if _ascii_key(name) == target or target in _ascii_key(name):
+                return index
+        return None
 
     def frames(self) -> int:
         """Số frame hợp lệ theo snap 17k+5 của H3, gần nhất với seconds*fps."""
         raw = self.seconds * self.fps
         k = max(1, round((raw - 5) / 17))
         return 17 * k + 5
+
+
+def _ascii_key(text: str) -> str:
+    import unicodedata
+
+    text = (text or "").replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    return " ".join(text.lower().split())
 
 
 @dataclass
@@ -384,14 +404,35 @@ def _load_video(raw: dict, models: dict[str, ModelSpec], root: Path) -> VideoSpe
         raise ConfigError("[pipeline.video] max_shots phải trong khoảng 1..6")
 
     references: dict[int, str] = {}
-    for key, label in (raw.get("references") or {}).items():
+    reference_images: dict[int, str] = {}
+    for key, value in (raw.get("references") or {}).items():
         try:
             idx = int(key)
         except (TypeError, ValueError):
             raise ConfigError(
                 f"[pipeline.video.references] khoá phải là số thứ tự ảnh (1, 2, 3...), đang là '{key}'"
             ) from None
-        references[idx] = str(label).strip()
+
+        if isinstance(value, dict):
+            name = str(value.get("name") or "").strip()
+            image = str(value.get("image") or "").strip()
+        else:
+            raw_text = str(value).strip()
+            name, image = raw_text, ""
+            for sep in ("—", " – ", " - ", "|"):
+                if sep in raw_text:
+                    left, right = raw_text.split(sep, 1)
+                    name, image = left.strip(), right.strip()
+                    break
+
+        if not name:
+            raise ConfigError(
+                f"[pipeline.video.references] ảnh {idx} thiếu tên nhân vật "
+                '(vd: 1 = "Hải" hoặc 1 = { name = "Hải", image = "refs/hai.png" })'
+            )
+        references[idx] = name
+        if image:
+            reference_images[idx] = image
 
     stages: dict[str, StageSpec] = {}
     for key in VIDEO_STAGES:
@@ -435,5 +476,6 @@ def _load_video(raw: dict, models: dict[str, ModelSpec], root: Path) -> VideoSpe
         fps=fps,
         max_shots=max_shots,
         references=references,
+        reference_images=reference_images,
         stages=stages,
     )

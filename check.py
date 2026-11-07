@@ -126,8 +126,13 @@ def main(argv: list[str] | None = None) -> int:
             problems += 0 if ok else 1
             print(f"  {key:<14}{_short(stage.model.model, 38):<40}{stage.prompt_path.name:<20} {mark}")
         if cfg.video.references:
-            refs = ", ".join(f"<Picture {n}> = {label}" for n, label in sorted(cfg.video.references.items()))
+            refs = ", ".join(
+                f"<Picture {n}> = {label}" for n, label in sorted(cfg.video.references.items())
+            )
             print(f"  Ảnh tham chiếu: {refs}")
+            for n, img in sorted((cfg.video.reference_images or {}).items()):
+                p = (cfg.path.parent / img).resolve()
+                print(f"    <Picture {n}> ảnh: {img}  {'✓' if p.exists() else '✗ chưa có file'}")
 
     # --- Kết luận ---
     print("\n" + "=" * 78)

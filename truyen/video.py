@@ -156,11 +156,17 @@ def clean_block(text: str) -> str:
         body,
         flags=re.IGNORECASE,
     )
+    # "Picture 3" thiếu ngoặc -> "<Picture 3>" (H3 cần đúng cú pháp thẻ)
+    body = re.sub(r"(?<![<\w])Picture\s+(\d+)(?!\s*>)", r"<Picture \1>", body)
     return body.strip()
 
 
 def audit_block(
-    text: str, seconds: float, max_shots: int, refs: dict[int, str] | None = None
+    text: str,
+    seconds: float,
+    max_shots: int,
+    refs: dict[int, str] | None = None,
+    expect_picture: int | None = None,
 ) -> list[str]:
     problems: list[str] = []
     body = text or ""
@@ -236,16 +242,27 @@ def audit_block(
     if "ENDS_WITH:" not in body:
         problems.append("Thiếu 'ENDS_WITH:' để nối clip sau")
 
+    if expect_picture is not None and f"<Picture {expect_picture}>" not in body:
+        problems.append(
+            f"Chưa dùng <Picture {expect_picture}> cho nhân vật chính của clip — "
+            f"phải gọi nhân vật bằng thẻ này"
+        )
+
     return problems
 
 
 # ----------------------------------------------------------------------
 # Viết một clip
 # ----------------------------------------------------------------------
-def build_references(refs: dict[int, str]) -> str:
+def build_references(refs: dict[int, str], images: dict[int, str] | None = None) -> str:
     if not refs:
         return "(không có ảnh tham chiếu — mô tả nhân vật bằng lời)"
-    return "\n".join(f"<Picture {n}> = {label}" for n, label in sorted(refs.items()))
+    lines = []
+    for n, label in sorted(refs.items()):
+        img = (images or {}).get(n)
+        # gửi tên không dấu để model không chép dấu tiếng Việt vào prompt
+        lines.append(f"<Picture {n}> = {_ascii(label)}" + (f"  [ảnh: {img}]" if img else ""))
+    return "\n".join(lines)
 
 
 def write_segment(
@@ -258,12 +275,12 @@ def write_segment(
     cast: str = "",
     memory: str = "",
 ) -> tuple[str, str]:
-    refs = build_references(cfg.video.references)
+    refs = build_references(cfg.video.references, cfg.video.reference_images)
     prompt = stage.user
     for key, value in (
         ("{index}", f"{beat['n']:02d}"),
         ("{summary}", beat["summary"]),
-        ("{character}", beat["character"]),
+        ("{character}", _ascii(beat["character"])),
         ("{space}", beat["space"]),
         ("{seconds}", str(int(cfg.video.seconds))),
         ("{frames}", str(cfg.video.frames())),
@@ -278,7 +295,10 @@ def write_segment(
 
     text = ask(client, stage.system, prompt, temperature=stage.effective_temperature)
     text = clean_block(text)
-    problems = audit_block(text, cfg.video.seconds, cfg.video.max_shots, cfg.video.references)
+    expect_pic = cfg.video.picture_of(beat["character"])
+    problems = audit_block(
+        text, cfg.video.seconds, cfg.video.max_shots, cfg.video.references, expect_pic
+    )
 
     if repair and problems:
         progress.say(f"  ✎ clip {beat['n']}: {len(problems)} lỗi — nhờ model sửa ...")
@@ -291,7 +311,9 @@ def write_segment(
         )
         fixed = ask(client, stage.system, fix_prompt, temperature=stage.effective_temperature)
         fixed = clean_block(fixed)
-        after = audit_block(fixed, cfg.video.seconds, cfg.video.max_shots, cfg.video.references)
+        after = audit_block(
+            fixed, cfg.video.seconds, cfg.video.max_shots, cfg.video.references, expect_pic
+        )
         if fixed and len(after) < len(problems):
             progress.say(f"  ✎ đã sửa: {len(problems)} → {len(after)} lỗi")
             text = fixed
@@ -519,6 +541,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--input", type=Path, default=None, help="File truyện .md hoặc kịch bản .txt")
     ap.add_argument("--seconds", type=float, default=None, help="Độ dài mỗi clip")
     ap.add_argument("--limit", type=int, default=12, help="Số clip tối đa")
+    ap.add_argument(
+        "--scenes",
+        type=Path,
+        default=None,
+        help="File cảnh do bạn tự viết (mỗi dòng: CLIP n | hành động | nhân vật | không gian) — bỏ qua bước chia tự động",
+    )
     ap.add_argument("--no-repair", action="store_true", help="Không nhờ model sửa lỗi")
     args = ap.parse_args(argv)
 
@@ -561,13 +589,36 @@ def main(argv: list[str] | None = None) -> int:
     stop = progress.start_heartbeat()
     clips: list[dict] = []
     try:
-        beats, note = split_clips(client_for(stage_split), stage_split, source, cfg.video.seconds)
-        if not beats:
-            print("✗ Không chia được clip nào (model trả rỗng)", file=sys.stderr)
-            return 1
-        if note == "fallback":
-            progress.say("  ⚠ Đang dùng cách chia tạm — kiểm lại contact.md")
+        if args.scenes:
+            if not args.scenes.exists():
+                print(f"✗ Không thấy file cảnh: {args.scenes}", file=sys.stderr)
+                return 1
+            beats = parse_beats(args.scenes.read_text(encoding="utf-8-sig"))
+            if not beats:
+                print(
+                    "✗ File cảnh không đọc được. Mỗi dòng phải là:\n"
+                    "   CLIP 1 | hành động cụ thể | nhân vật | không gian",
+                    file=sys.stderr,
+                )
+                return 1
+            progress.say(f"Dùng {len(beats)} cảnh bạn tự viết (bỏ qua chia tự động)")
+        else:
+            beats, note = split_clips(client_for(stage_split), stage_split, source, cfg.video.seconds)
+            if not beats:
+                print("✗ Không chia được clip nào (model trả rỗng)", file=sys.stderr)
+                return 1
+            if note == "fallback":
+                progress.say("  ⚠ Đang dùng cách chia tạm — kiểm lại contact.md")
         beats = beats[: args.limit]
+
+        # Thiếu ảnh tham chiếu cho nhân vật nào?
+        if cfg.video.references:
+            missing = sorted(
+                {b["character"] for b in beats if cfg.video.picture_of(b["character"]) is None}
+            )
+            if missing:
+                progress.say(f"  ⚠ Chưa có ảnh tham chiếu cho: {', '.join(missing)}")
+                progress.say("    → các nhân vật này sẽ được mô tả bằng lời, không dùng <Picture N>")
         progress.say(f"Chia được {len(beats)} clip")
 
         prev_ends = "(clip đầu tiên, chưa có)"
@@ -607,7 +658,13 @@ def main(argv: list[str] | None = None) -> int:
                     mode = "forced"
                     progress.say("  🔗 đã ghi CONTINUES_FROM bằng trạng thái clip trước")
 
-            problems = audit_block(text, cfg.video.seconds, cfg.video.max_shots, cfg.video.references)
+            problems = audit_block(
+                text,
+                cfg.video.seconds,
+                cfg.video.max_shots,
+                cfg.video.references,
+                cfg.video.picture_of(beat["character"]),
+            )
             if mode == "missing":
                 problems.append("Không tìm được trường để chèn câu nối cảnh")
             clips.append(

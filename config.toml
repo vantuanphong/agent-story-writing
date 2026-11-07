@@ -147,9 +147,12 @@ fps = 24
 max_shots = 3          # số shot tối đa trong 1 clip
 
 [pipeline.video.references]
-# Ảnh tham chiếu R2V: số = thứ tự ảnh trong ComfyUI
-1 = "nhân vật chính"
-2 = "nhân vật nữ chính"
+# Tên phải khớp với mục Characters của truyện (không dấu cũng khớp).
+# Số = thứ tự ảnh khi bạn nạp vào node Reference của ComfyUI.
+# image = đường dẫn ảnh (chỉ để đối chiếu; script KHÔNG đọc ảnh).
+1 = { name = "Hải", image = "refs/hai.png" }
+2 = { name = "Lam", image = "refs/lam.png" }
+3 = { name = "Ông Tư", image = "refs/ong_tu.png" }
 
 [pipeline.video.split]
 # Chia truyện thành clip: cần hiểu mạch truyện
